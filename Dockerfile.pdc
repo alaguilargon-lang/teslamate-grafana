@@ -1,0 +1,19 @@
+ARG TESLAMATE_VERSION
+FROM grafana/pdc-agent:0.0.68@sha256:f2c3b93bd1881b5f8fb9f6bf3d7e6d1dedeaf213a567172f278082e735a63c99 AS pdc
+FROM teslamate/teslamate:${TESLAMATE_VERSION}
+
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssh-client ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --user-group --create-home --home-dir /var/lib/pdc-agent --shell /usr/sbin/nologin pdc-agent \
+    && command -v runuser \
+    && command -v setpriv \
+    && test -x /entrypoint.sh
+
+COPY --from=pdc --chmod=0555 /usr/bin/pdc /usr/local/bin/pdc
+COPY --chmod=0555 start-pdc.sh /usr/local/bin/start-teslamate-and-pdc
+
+EXPOSE 4000
+ENTRYPOINT ["tini", "-g", "--", "/usr/local/bin/start-teslamate-and-pdc"]
+CMD ["bin/teslamate", "start"]
