@@ -9,13 +9,12 @@ on:
         type: string
 
 permissions:
-  contents: read
-  packages: write
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - name: Compilar imagen Linux x86-64
@@ -28,12 +27,17 @@ jobs:
             -t teslamate-grafana:prueba .
       - name: Probar los dos procesos con 512 MiB y 0,2 vCPU
         run: bash smoke-test.sh
-      - name: Publicar en GitHub Container Registry
+      - name: Guardar imagen en un borrador de Releases
         env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          image="ghcr.io/${GITHUB_REPOSITORY,,}:prueba-$GITHUB_RUN_NUMBER"
-          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          docker tag teslamate-grafana:prueba "$image"
-          docker push "$image"
-          printf 'Imagen para Northflank\n\n\x60%s\x60\n' "$image" >> "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
+          docker save --output teslamate-grafana.tar teslamate-grafana:prueba
+          zip -q teslamate-grafana-docker.zip teslamate-grafana.tar
+          tag="imagen-prueba-$GITHUB_RUN_NUMBER-$GITHUB_RUN_ATTEMPT"
+          url=$(gh release create "$tag" teslamate-grafana-docker.zip \
+            --draft --target "$GITHUB_SHA" --title "Imagen TeslaMate y Grafana: $tag" \
+            --notes 'Descarga el ZIP, extrae el archivo TAR e impórtalo en Northflank.' \
+            --repo "$GITHUB_REPOSITORY")
+          printf 'Imagen probada lista para descargar\n\n[Abre el borrador y descarga teslamate-grafana-docker.zip](%s)\n' \
+            "$url" >> "$GITHUB_STEP_SUMMARY"
