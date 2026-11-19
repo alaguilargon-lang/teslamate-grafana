@@ -1,0 +1,19 @@
+apiVersion: 1
+datasources:
+  - name: TeslaMate
+    uid: TeslaMate
+    type: postgres
+    access: proxy
+    url: $GRAFANA_TESLAMATE_DATABASE_ADDRESS
+    user: grafana_reader
+    isDefault: true
+    editable: false
+    secureJsonData:
+      password: $GRAFANA_TESLAMATE_READER_PASSWORD
+    jsonData:
+      database: $GRAFANA_TESLAMATE_DATABASE_NAME
+      sslmode: disable
+      postgresVersion: 1800
+      maxOpenConns: 5
+      maxIdleConns: 2
+      maxIdleConnsAuto: false
