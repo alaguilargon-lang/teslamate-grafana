@@ -1,0 +1,67 @@
+name: Compilar TeslaMate con el agente PDC
+
+on:
+  workflow_dispatch:
+    inputs:
+      teslamate_version:
+        description: Versión instalada de TeslaMate, sin la v inicial
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - name: Compilar la imagen para Northflank
+        env:
+          TESLAMATE_VERSION: ${{ inputs.teslamate_version }}
+        run: |
+          [[ "$TESLAMATE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          bash -n start-pdc.sh
+          docker build --platform linux/amd64 --file Dockerfile.pdc \
+            --build-arg "TESLAMATE_VERSION=$TESLAMATE_VERSION" -t teslamate-pdc:prueba .
+      - name: Validar el arranque de TeslaMate con los límites de Northflank
+        run: |
+          set -euo pipefail
+          docker network create teslamate-pdc-ci
+          docker run -d --name teslamate-pdc-db --network teslamate-pdc-ci \
+            -e POSTGRES_DB=teslamate -e POSTGRES_PASSWORD=solo-para-ci postgres:18-trixie
+          for attempt in {1..60}; do
+            if docker exec teslamate-pdc-db pg_isready -h 127.0.0.1 -U postgres -d teslamate; then break; fi
+            sleep 1
+          done
+          docker run --rm --entrypoint /bin/bash teslamate-pdc:prueba -c '
+            ayuda=$(/usr/local/bin/pdc -h 2>&1 || true)
+            [[ "$ayuda" == *"-ssh-flag"* ]] && ssh -V
+          '
+          docker run -d --name teslamate-pdc-app --network teslamate-pdc-ci \
+            --cpus 0.2 --memory 512000000 --memory-swap 512000000 -p 127.0.0.1:44000:4000 \
+            -e DATABASE_HOST=teslamate-pdc-db -e DATABASE_NAME=teslamate \
+            -e DATABASE_USER=postgres -e DATABASE_PASS=solo-para-ci \
+            -e DISABLE_MQTT=true -e ENCRYPTION_KEY=solo-para-ci-clave-no-real-1234567890 \
+            teslamate-pdc:prueba
+          for attempt in {1..120}; do
+            if curl -fsS --max-time 2 http://127.0.0.1:44000/ >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          if ! curl -fsS --max-time 10 http://127.0.0.1:44000/ >/dev/null; then
+            docker logs --tail 100 teslamate-pdc-app
+            exit 1
+          fi
+      - name: Guardar la imagen en un borrador de Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          docker save --output teslamate-pdc.tar teslamate-pdc:prueba
+          zip -q teslamate-pdc-docker.zip teslamate-pdc.tar
+          tag="imagen-pdc-$GITHUB_RUN_NUMBER-$GITHUB_RUN_ATTEMPT"
+          url=$(gh release create "$tag" teslamate-pdc-docker.zip \
+            --draft --target "$GITHUB_SHA" --title "Imagen TeslaMate y PDC $tag" \
+            --notes 'Descarga el ZIP, extrae el TAR e impórtalo en Northflank.' --repo "$GITHUB_REPOSITORY")
+          printf '[Descargar ZIP de la imagen en Releases](%s)\n' "$url" >> "$GITHUB_STEP_SUMMARY"
