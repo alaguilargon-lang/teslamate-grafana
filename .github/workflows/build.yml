@@ -1,0 +1,39 @@
+name: Compilar y probar TeslaMate con Grafana
+
+on:
+  workflow_dispatch:
+    inputs:
+      teslamate_version:
+        description: Versión que aparece al pie de tu TeslaMate, sin la v inicial
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Compilar imagen Linux x86-64
+        env:
+          TESLAMATE_VERSION: ${{ inputs.teslamate_version }}
+        run: |
+          [[ "$TESLAMATE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          docker build --build-arg "TESLAMATE_VERSION=$TESLAMATE_VERSION" \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            -t teslamate-grafana:prueba .
+      - name: Probar los dos procesos con 512 MiB y 0,2 vCPU
+        run: bash smoke-test.sh
+      - name: Publicar en GitHub Container Registry
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}:prueba-$GITHUB_RUN_NUMBER"
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker tag teslamate-grafana:prueba "$image"
+          docker push "$image"
+          printf 'Imagen para Northflank\n\n\x60%s\x60\n' "$image" >> "$GITHUB_STEP_SUMMARY"
